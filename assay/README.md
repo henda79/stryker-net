@@ -40,4 +40,6 @@ the new release: if it passes, upstream's fix covers it.
 
 | Commit | Fix | Upstream |
 |---|---|---|
-| fix(compiling): read Features entries as name=value | Razor components fail to compile under Stryker: the SDK's `use-roslyn-tokenizer=true` reached the Razor generator under the wrong name | not yet reported |
+| fix(compiling): read Features entries as name=value, and its follow-up (names ignoring case, quotes, commas) | Razor components fail to compile under Stryker: the SDK's `use-roslyn-tokenizer=true` reached the Razor generator under the wrong name | [stryker-net#4010](https://github.com/stryker-mutator/stryker-net/pull/4010) |
+
+The follow-up commit is not in package 5.1.1-assay.1 (tag stryker-5.1.1-assay.1); the next package picks it up.
