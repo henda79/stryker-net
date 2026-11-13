@@ -41,5 +41,6 @@ the new release: if it passes, upstream's fix covers it.
 | Commit | Fix | Upstream |
 |---|---|---|
 | fix(compiling): read Features entries as name=value, and its follow-up (names ignoring case, quotes, commas) | Razor components fail to compile under Stryker: the SDK's `use-roslyn-tokenizer=true` reached the Razor generator under the wrong name | [stryker-net#4010](https://github.com/stryker-mutator/stryker-net/pull/4010) |
+| fix(mtp): stop waiting on a discarded test host's coverage relay | Once one test timed out during per-test coverage, every later test waited 10 s on the dead host's relay and came back Dubious ([stryker-net#3871](https://github.com/stryker-mutator/stryker-net/issues/3871)) | branch `fix/mtp-discarded-host-relay`, pull request not yet opened |
 
-The follow-up commit is not in package 5.1.1-assay.1 (tag stryker-5.1.1-assay.1); the next package picks it up.
+Package 5.1.1-assay.2 (tag stryker-5.1.1-assay.2) has every patch above.
