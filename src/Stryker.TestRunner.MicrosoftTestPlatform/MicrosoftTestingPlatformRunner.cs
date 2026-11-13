@@ -47,6 +47,8 @@ public class MicrosoftTestingPlatformRunner : IDisposable
     private readonly object _serverLock = new();
     private readonly HashSet<string> _initializedPerTestFiles = new();
     private readonly Dictionary<string, int> _perTestEpochCounters = new();
+    // Relay and coverage files of discarded test hosts; see RetirePerTestFiles
+    private readonly ConcurrentDictionary<string, byte> _retiredPerTestFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private TestCaseFilterExpression? _strykerSideFilter;
 
@@ -294,6 +296,41 @@ public class MicrosoftTestingPlatformRunner : IDisposable
             }
             DeleteFileIfExists(epochFilePath);
         }
+
+        // Those of discarded hosts that were still open when they were retired
+        foreach (var retiredFilePath in _retiredPerTestFiles.Keys)
+        {
+            DeleteFileIfExists(retiredFilePath);
+        }
+        _retiredPerTestFiles.Clear();
+    }
+
+    /// <summary>
+    /// Stops listing the relay and coverage files a discarded test host wrote for per-test capture, and
+    /// deletes them. The host that replaces it writes its own under new names, while the discarded one's
+    /// relay can never acknowledge again: still listed, it would be waited on for the whole ack timeout
+    /// after every later test, each of which would come back Dubious, and its coverage file - what the
+    /// last test it flushed covered - would be credited to every later test. A host that was killed may
+    /// still hold the files open for a moment, so they are retired by name and not only deleted.
+    /// </summary>
+    private void RetirePerTestFiles(string assembly)
+    {
+        lock (_serverLock)
+        {
+            if (!_perTestCoverageMode || !_initializedPerTestFiles.Contains(assembly))
+            {
+                return;
+            }
+
+            var filesOfTheDiscardedHost = EnumerateEpochRelayFiles(GetPerTestEpochFilePath(assembly))
+                .Concat(EnumerateCoverageFiles(GetPerTestCoverageFilePath(assembly)))
+                .ToList();
+            foreach (var path in filesOfTheDiscardedHost)
+            {
+                _retiredPerTestFiles[path] = 0;
+                DeleteFileIfExists(path);
+            }
+        }
     }
 
     private static string SanitizeAssemblyName(string assembly) =>
@@ -371,7 +408,9 @@ public class MicrosoftTestingPlatformRunner : IDisposable
         var searchPattern = Path.GetFileNameWithoutExtension(handedOutPath) + "*" + Path.GetExtension(handedOutPath);
         try
         {
-            return Directory.GetFiles(directory, searchPattern);
+            return Directory.GetFiles(directory, searchPattern)
+                .Where(path => !_retiredPerTestFiles.ContainsKey(path))
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -522,6 +561,7 @@ public class MicrosoftTestingPlatformRunner : IDisposable
         {
             return Directory.GetFiles(directory, searchPattern)
                 .Where(path => !string.Equals(Path.GetFileName(path), baseFileName, StringComparison.OrdinalIgnoreCase))
+                .Where(path => !_retiredPerTestFiles.ContainsKey(path))
                 .ToList();
         }
         catch (Exception ex)
@@ -809,6 +849,7 @@ public class MicrosoftTestingPlatformRunner : IDisposable
         if (deadServer is not null)
         {
             await deadServer.StopAsync(force: true).ConfigureAwait(false);
+            RetirePerTestFiles(assembly);
         }
 
         var environmentVariables = BuildEnvironmentVariables(assembly);
@@ -845,6 +886,8 @@ public class MicrosoftTestingPlatformRunner : IDisposable
         {
             await server.StopAsync(force: true).ConfigureAwait(false);
         }
+
+        RetirePerTestFiles(assembly);
     }
 
     private async Task<bool> DiscoverTestsInternalAsync(string assembly)

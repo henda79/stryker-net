@@ -947,6 +947,55 @@ public class MicrosoftTestingPlatformRunnerCoverageTests
         }
     }
 
+    [TestMethod, Timeout(10000)]
+    public async Task RunSingleTestForCoverageInReusedProcessAsync_ShouldStopWaitingOnADiscardedHostsRelay()
+    {
+        // A test host is discarded when a test times out or the host crashes, and the one that replaces it
+        // writes its relays and coverage files under new names. The discarded host's relay can never
+        // acknowledge again: left in place, every later test waited the whole ack timeout on it and came
+        // back Dubious, and its coverage file - the last test it flushed - was credited to every later test.
+        const string assembly = "/nonexistent/assembly.dll";
+        var testNode = new TestNode("test-1", "Test1", "test", "discovered");
+
+        using var runner = CreateRunner(715);
+        runner.SetPerTestCoverageMode(true);
+
+        // Registers the assembly the way a real capture does, then fails for want of a test host
+        await runner.RunSingleTestForCoverageInReusedProcessAsync(assembly, testNode, "test-1");
+
+        var coverageFilePath = runner.GetPerTestCoverageFilePath(assembly);
+        var epochFilePath = runner.GetPerTestEpochFilePath(assembly);
+        // What the copy of the injected MutantControl in the host being discarded had written
+        var deadRelay = WriteEpochRelayFile(epochFilePath, "DiscardedHost", request: 3, ack: 3);
+        var deadCoverage = SuffixedPath(coverageFilePath, "DiscardedHost");
+        string? liveRelay = null;
+
+        try
+        {
+            File.WriteAllText(deadCoverage, "1,2;10");
+
+            // Fails again, and this time discards a host that has left files behind
+            await runner.RunSingleTestForCoverageInReusedProcessAsync(assembly, testNode, "test-1");
+
+            // The host that replaces it
+            liveRelay = WriteEpochRelayFile(epochFilePath, "ReplacementHost", request: 0, ack: 0);
+
+            var requestedRelays = runner.BroadcastEpochRequest(epochFilePath, 4);
+
+            requestedRelays.ShouldBe(new[] { liveRelay },
+                "only the live host can acknowledge, so only its relay may be waited on");
+            File.Exists(deadCoverage).ShouldBeFalse("the discarded host's coverage belongs to no later test");
+        }
+        finally
+        {
+            runner.SetPerTestCoverageMode(false);
+            foreach (var path in new[] { deadRelay, deadCoverage, liveRelay, coverageFilePath, epochFilePath })
+            {
+                if (path is not null && File.Exists(path)) File.Delete(path);
+            }
+        }
+    }
+
     private static string SuffixedPath(string path, string suffix) =>
         Path.Combine(
             Path.GetDirectoryName(path)!,
