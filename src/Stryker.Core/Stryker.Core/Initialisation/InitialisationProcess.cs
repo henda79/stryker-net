@@ -132,7 +132,14 @@ public class InitialisationProcess(
                 throw new InputException("Initial testrun has failing tests.", result.Result.ResultMessage);
             }
 
-            if (throwIfFails && (double)failingTestsCount / result.Result.ExecutedTests.Count >= .5)
+            // EveryTest has no identifiers, so its Count is 0: count the discovered tests instead.
+            var executedTestsCount = result.Result.ExecutedTests.IsEveryTest
+                ? testRunner.GetTests(projectInfo).Count
+                : result.Result.ExecutedTests.Count;
+            var failingShare = result.Result.FailingTests.IsEveryTest || executedTestsCount == 0
+                ? 1
+                : (double)failingTestsCount / executedTestsCount;
+            if (throwIfFails && failingShare >= .5)
             {
                 throw new InputException("Initial testrun has more than 50% failing tests.",
                         result.Result.ResultMessage);

@@ -523,6 +523,52 @@ public class InitialisationProcessTests : TestBase
         }
     }
 
+    // A runner that ran every discovered test may report its executed tests as EveryTest, whose
+    // Count is 0: one failing test out of hundreds must not read as "more than 50% failing".
+    [TestMethod]
+    public async Task InitialisationProcess_ShouldNotThrow_WhenAFewTestsFailAndEveryTestRan()
+    {
+        var testRunnerMock = new Mock<ITestRunner>(MockBehavior.Strict);
+        var inputFileResolverMock = new Mock<IInputFileResolver>(MockBehavior.Strict);
+        var initialBuildProcessMock = new Mock<IInitialBuildProcess>(MockBehavior.Strict);
+        var initialTestProcessMock = new Mock<IInitialTestProcess>(MockBehavior.Strict);
+        var loggerMock = new Mock<ILogger<InitialisationProcess>>();
+        var target = new InitialisationProcess(inputFileResolverMock.Object, initialBuildProcessMock.Object,
+            initialTestProcessMock.Object, loggerMock.Object);
+        var mockFileSystem = new MockFileSystem();
+        var options = new StrykerOptions
+        {
+            ProjectName = "TheProjectName",
+            ProjectVersion = "TheProjectVersion",
+            WorkingDirectory = "./"
+        };
+        var projectTracker = new ProjectsTracker(SolutionFile.BuildFromProjectList("solution.sln", []), options,
+            new Mock<IBuildalyzerProvider>(MockBehavior.Strict).Object,
+            new Mock<INugetRestoreProcess>().Object,
+            mockFileSystem, loggerMock.Object);
+        inputFileResolverMock.Setup(x => x.ResolveSourceProjectInfos(It.IsAny<StrykerOptions>())).Returns(new RelatedSourceProjectsInfo(projectTracker,
+        [new SourceProjectInfo(TestHelper.SetupProjectAnalyzerResult(references: []).Object, new TestProjectsInfo(new MockFileSystem()))]));
+        inputFileResolverMock.SetupGet(x => x.FileSystem).Returns(new FileSystem());
+        initialBuildProcessMock.Setup(x => x.InitialBuild(It.IsAny<bool>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), null, It.IsAny<string>()));
+        const string failedTest = "testid";
+        var testSet = new TestSet();
+        foreach (var test in new[] { failedTest, "othertest", "anothertest" })
+        {
+            testSet.RegisterTest(new TestDescription(test, "test", "test.cpp"));
+        }
+        testRunnerMock.Setup(x => x.DiscoverTestsAsync(It.IsAny<string>())).Returns(Task.FromResult(true));
+        testRunnerMock.Setup(x => x.GetTests(It.IsAny<IProjectAndTests>())).Returns(testSet);
+        initialTestProcessMock.Setup(x => x.InitialTestAsync(It.IsAny<StrykerOptions>(), It.IsAny<IProjectAndTests>(), It.IsAny<ITestRunner>())).ReturnsAsync(new InitialTestRun(
+            new TestRunResult(Array.Empty<VsTestDescription>(), TestIdentifierList.EveryTest(), new TestIdentifierList(failedTest), TestIdentifierList.NoTest(), string.Empty, Enumerable.Empty<string>(), TimeSpan.Zero), new TimeoutValueCalculator(0)));
+
+        var projects = target.GetMutableProjectsInfo(options);
+        target.BuildProjects(options, projects);
+        var testInputs = await target.GetMutationTestInputsAsync(options, projects, testRunnerMock.Object);
+
+        testInputs.ShouldNotBeEmpty();
+    }
+
     [TestMethod]
     public async Task InitialisationProcess_ShouldRunTestSession()
     {
